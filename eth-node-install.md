@@ -35,18 +35,15 @@ docker network create ethereum-network
 
 openssl rand -hex 32 > /your/local/jwtsecret
 
-docker run -it --name my-geth-node \
-  --network ethereum-network \
-  -v /your/local/geth/data:/data \
-  -v /your/local/jwtsecret:/jwtsecret \
-  -p 8545:8545 \
-  -p 8551:8551 \
-  -p 30303:30303 \
-  ethereum/client-go:latest \
-  --http --http.addr "0.0.0.0" --http.api "eth,net,web3,personal" --http.port 8545 \
-  --authrpc.addr "0.0.0.0" --authrpc.port 8551 --authrpc.vhosts "*" \
-  --datadir /data \
-  --authrpc.jwtsecret /jwtsecret
+docker run -d --name ethereum-node -v /mnt/md0/eth/wallet/docker:/root \
+           -v /mnt/md0/eth/wallet/jwtsecret:/jwtsecret \
+           --network ethereum-network \
+           -p 8545:8545 -p 8551:8551 -p 30303:30303 \
+           ethereum/client-go \
+           --syncmode snap \
+           --http --http.addr "0.0.0.0" --http.vhosts "*" --http.api "eth,net,web3" \
+           --http.port 8545   --authrpc.addr "0.0.0.0" --authrpc.port 8551 --authrpc.vhosts "*" \
+           --authrpc.jwtsecret /jwtsecret
 ```
 
 参数说明：
@@ -66,17 +63,18 @@ docker run -it --name my-geth-node \
 
 ```
 docker run -it --name my-prysm-beacon \
-  --network ethereum-network \
-  -v /your/local/prysm/data:/data \
-  -v /your/local/prysm/config:/config \
-  -v /your/local/jwtsecret:/jwtsecret \
-  -p 4000:4000 \
-  -p 13000:13000 \
-  gcr.io/prysmaticlabs/prysm/beacon-chain:latest \
-  --datadir /data \
-  --config-file=/config/prysm_config.yaml \
-  --execution-endpoint=http://my-geth-node:8551 \
-  --jwt-secret=/jwtsecret
+--network ethereum-network \
+-v /mnt/md0/eth/beacon/config:/config \
+-v /mnt/md0/eth/beacon/data/directory:/data \
+-v /mnt/md0/eth/wallet/jwtsecret:/jwtsecret \
+-p 4000:4000 \
+-p 13000:13000 \
+gcr.io/prysmaticlabs/prysm/beacon-chain:latest \
+--config-file=/config/prysm_config.yaml \
+--datadir=/data \
+--execution-endpoint=http://ethereum-node:8551 \
+--checkpoint-sync-url=https://beaconstate.ethstaker.cc \
+--jwt-secret=/jwtsecret
 ```
 
 参数说明：
@@ -93,6 +91,45 @@ docker run -it --name my-prysm-beacon \
 注意事项：
 确保 /your/local/geth/data、/your/local/prysm/data、/your/local/prysm/config 和 /your/local/jwtsecret 等目录在宿主机上存在，并且具有适当的权限，以便 Docker 容器可以进行读写操作。
 确保生成的 JWT 令牌文件的安全性，避免泄露，因为它是认证的关键。
+
+# 验证是否同步完成
+
+```
+#!/bin/bash
+
+# Geth RPC 端点，根据实际情况修改
+RPC_ENDPOINT="http://localhost:8545"
+
+# 发送 JSON-RPC 请求以获取同步状态
+response=$(curl -s -X POST -H "Content-Type:application/json" --data '{"jsonrpc":"2.0","method":"eth_syncing","params":[],"id":1}' $RPC_ENDPOINT)
+
+# 使用 jq 解析 JSON 响应
+syncing=$(echo $response | jq -r '.result')
+
+if [ "$syncing" == "false" ]; then
+    # 如果同步已完成，获取当前块号作为同步高度
+    height=$(echo $response | jq -r '.result.blockNumber')
+    # 去掉 0x 前缀
+    clean_height=$(echo $height | sed 's/^0x//')
+    # 使用 printf 进行十六进制到十进制的转换
+    height_dec=$(printf "%d" "0x$clean_height")
+    echo "Geth 节点已完成同步，当前块号（十进制）为: $height_dec"
+else
+    # 如果正在同步，获取当前块号和最高块号
+    current_block_hex=$(echo $syncing | jq -r '.currentBlock')
+    highest_block_hex=$(echo $syncing | jq -r '.highestBlock')
+
+    # 去掉 0x 前缀
+    clean_current_block=$(echo $current_block_hex | sed 's/^0x//')
+    clean_highest_block=$(echo $highest_block_hex | sed 's/^0x//')
+
+    # 使用 printf 进行十六进制到十进制的转换
+    current_block_dec=$(printf "%d" "0x$clean_current_block")
+    highest_block_dec=$(printf "%d" "0x$clean_highest_block")
+
+    echo "Geth 节点正在同步，当前块号（十进制）: $current_block_dec，最高块号（十进制）: $highest_block_dec"
+fi
+```
 
 七、检查容器状态和日志
 在容器启动后，可以通过以下命令检查容器是否正常运行以及查看日志信息，便于排查可能出现的问题：
