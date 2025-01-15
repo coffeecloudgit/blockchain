@@ -133,7 +133,9 @@ fi
 
 七、检查容器状态和日志
 在容器启动后，可以通过以下命令检查容器是否正常运行以及查看日志信息，便于排查可能出现的问题：
+```
 bash
 docker ps
 docker logs -f my-geth-node
 docker logs -f my-prysm-beacon
+```
